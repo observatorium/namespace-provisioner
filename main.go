@@ -106,6 +106,7 @@ func Main() error {
 	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), rawRole, role); err != nil {
 		return fmt.Errorf("failed to decode Role: %w", err)
 	}
+	role.Name = np
 
 	ls, err := labels.ConvertSelectorToLabelsMap(*selector)
 	if err != nil {

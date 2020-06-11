@@ -118,9 +118,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.role.ObjectMeta.Labels = h.labels
-
-	if _, err := h.c.RbacV1().Roles(namespace).Create(r.Context(), h.role, metav1.CreateOptions{}); err != nil {
+	role := h.role.DeepCopy()
+	role.Namespace = namespace
+	role.ObjectMeta.Labels = h.labels
+	if _, err := h.c.RbacV1().Roles(namespace).Create(r.Context(), role, metav1.CreateOptions{}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
