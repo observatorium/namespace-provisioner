@@ -107,7 +107,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	sa := &v1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "namespace-provisioner",
+			Name:      np,
 			Namespace: namespace,
 			Labels:    h.labels,
 		},
@@ -128,14 +128,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	rb := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "namespace-provisioner",
+			Name:      np,
 			Namespace: namespace,
 			Labels:    h.labels,
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
-			Kind:     h.role.Kind,
-			Name:     h.role.GetName(),
+			Kind:     role.Kind,
+			Name:     role.GetName(),
 		},
 		Subjects: []rbacv1.Subject{{
 			Kind:      "ServiceAccount",
@@ -181,18 +181,18 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	cluster := api.NewCluster()
 	cluster.Server = "https://56fa0b9d-1d55-4b2d-8d0b-3cb8e4350da9.api.k8s.fr-par.scw.cloud:6443" // TODO
 	cluster.CertificateAuthorityData = []byte(caCert)
-	config.Clusters["namespace-provisioner"] = cluster
+	config.Clusters[np] = cluster
 
 	user := api.NewAuthInfo()
 	user.Token = string(token)
-	config.AuthInfos["namespace-provisioner"] = user
+	config.AuthInfos[np] = user
 
 	context := api.NewContext()
-	context.AuthInfo = "namespace-provisioner"
-	context.Cluster = "namespace-provisioner"
+	context.AuthInfo = np
+	context.Cluster = np
 	context.Namespace = namespace
-	config.Contexts["namespace-provisioner"] = context
-	config.CurrentContext = "namespace-provisioner"
+	config.Contexts[np] = context
+	config.CurrentContext = np
 
 	payload, err := clientcmd.Write(*config)
 	if err != nil {

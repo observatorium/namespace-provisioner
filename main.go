@@ -38,6 +38,8 @@ const (
 	logLevelWarn  = "warn"
 	logLevelError = "error"
 	logLevelNone  = "none"
+
+	np = "namespace-provisioner"
 )
 
 var (
@@ -65,7 +67,7 @@ func Main() error {
 	ttl := flag.Duration("ttl", time.Hour, "The default time that a Namespace should exist.")
 	flag.Parse()
 
-	l := log.WithPrefix(log.NewJSONLogger(log.NewSyncWriter(os.Stderr)), "name", "namespace-provisioner")
+	l := log.WithPrefix(log.NewJSONLogger(log.NewSyncWriter(os.Stderr)), "name", np)
 	l = log.WithPrefix(l, "ts", log.DefaultTimestampUTC)
 	l = log.WithPrefix(l, "caller", log.DefaultCaller)
 
@@ -119,7 +121,7 @@ func Main() error {
 	var g run.Group
 	{
 		h := internalserver.NewHandler(
-			internalserver.WithName("namespace-provisioner"),
+			internalserver.WithName(np),
 			internalserver.WithPrometheusRegistry(r),
 			internalserver.WithPProf(),
 		)
