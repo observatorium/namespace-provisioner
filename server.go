@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -21,6 +22,22 @@ import (
 	apiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
 )
 
+func withRequireToken(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.Header.Get("Authorization"), " ")
+		if len(parts) != 2 {
+			http.Error(w, "invalid Authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		if parts[1] != token {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 type handler struct {
 	c       kubernetes.Interface
 	factory informers.SharedInformerFactory
@@ -29,7 +46,6 @@ type handler struct {
 	master  *url.URL
 	prefix  string
 	role    *rbacv1.Role
-	token   string
 	ttl     time.Duration
 
 	duration *prometheus.HistogramVec
@@ -48,7 +64,6 @@ func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, fa
 		master:  master,
 		role:    role,
 		prefix:  prefix,
-		token:   token,
 		ttl:     ttl,
 
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -65,7 +80,11 @@ func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, fa
 	router.HandlerFunc(http.MethodPost, "/api/v1/namespace", h.create)
 	router.HandlerFunc(http.MethodDelete, "/api/v1/namespace/:name", h.delete)
 
-	return router
+	if token == "" {
+		return router
+	}
+
+	return withRequireToken(token, router)
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
