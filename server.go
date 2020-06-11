@@ -16,6 +16,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+	apiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
 )
 
 type handler struct {
@@ -71,10 +74,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		h.duration.WithLabelValues("create").Observe(time.Since(start).Seconds())
 	}(start)
 
-	name := fmt.Sprintf("%s-%s", h.prefix, uuid.Must(uuid.NewUUID()).String())
+	namespace := fmt.Sprintf("%s-%s", h.prefix, uuid.Must(uuid.NewUUID()).String())
 	ns := &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
+			Name:   namespace,
 			Labels: h.labels,
 		},
 	}
@@ -82,7 +85,103 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	sa := &v1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "namespace-provisioner",
+			Namespace: namespace,
+			Labels:    h.labels,
+		},
+	}
+	sa, err := h.c.CoreV1().ServiceAccounts(namespace).Create(r.Context(), sa, metav1.CreateOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.role.ObjectMeta.Labels = h.labels
+
+	if _, err := h.c.RbacV1().Roles(namespace).Create(r.Context(), h.role, metav1.CreateOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "namespace-provisioner",
+			Namespace: namespace,
+			Labels:    h.labels,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     h.role.Kind,
+			Name:     h.role.GetName(),
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      sa.GetName(),
+			Namespace: namespace,
+		}},
+	}
+
+	if _, err := h.c.RbacV1().RoleBindings(namespace).Create(r.Context(), rb, metav1.CreateOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create Kubeconfig
+
+	// TODO: Use an informer or something proper as this might race - famous last words
+	sa, err = h.c.CoreV1().ServiceAccounts(namespace).Get(r.Context(), sa.Name, metav1.GetOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(sa.Secrets) == 0 {
+		msg := "no secret for service account"
+		h.logger.Log("msg", msg)
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+
+	se, err := h.c.CoreV1().Secrets(namespace).Get(r.Context(), sa.Secrets[0].Name, metav1.GetOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	caCert := se.Data["ca.crt"]
+	token := se.Data["token"]
+
+	config := api.NewConfig()
+	config.APIVersion = apiv1.SchemeGroupVersion.Version
+	config.Kind = "Config"
+
+	cluster := api.NewCluster()
+	cluster.Server = "https://56fa0b9d-1d55-4b2d-8d0b-3cb8e4350da9.api.k8s.fr-par.scw.cloud:6443" // TODO
+	cluster.CertificateAuthorityData = []byte(caCert)
+	config.Clusters["namespace-provisioner"] = cluster
+
+	user := api.NewAuthInfo()
+	user.Token = string(token)
+	config.AuthInfos["namespace-provisioner"] = user
+
+	context := api.NewContext()
+	context.AuthInfo = "namespace-provisioner"
+	context.Cluster = "namespace-provisioner"
+	context.Namespace = namespace
+	config.Contexts["namespace-provisioner"] = context
+	config.CurrentContext = "namespace-provisioner"
+
+	payload, err := clientcmd.Write(*config)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusCreated)
+	w.Write(payload)
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
