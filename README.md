@@ -33,10 +33,9 @@ All provisioned Namespaces will be labeled with a Unix timestamp equal to the cu
 1. Optional: Kubernetes API URL; the endpoint of the Kubernetes API that the generated Kubeconfig should use.
 
 The Namespace creation endpoint responds with the following data:
-1. The name of the provisioned Namespace; and
-1. A Kubeconfig with full administrative privileges for the provisioned Namespace and using the Kubernetes API URL provided in the creation request.
+1. A Kubeconfig with scoped privileges for the provisioned Namespace using the provided RBAC Role and the Kubernetes API URL provided in the creation request.
 
-To generate the Kubeconfig to fulfill the request, the Namespace provisioner first generates a ServiceAccount for the new Namespace, binds the required RBAC roles, and finally uses the certificates and token for the ServiceAccount to produce a Kubeconfig.
+In order to generate the Kubeconfig to fulfill the request, the Namespace provisioner first generates a ServiceAccount for the new Namespace, binds the specified RBAC role to it, and finally uses the certificate and token for the ServiceAccount to produce a Kubeconfig.
 
 #### Namespace Deletion - DELETE /api/v1/namespace/<name>
 
