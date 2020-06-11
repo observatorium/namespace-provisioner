@@ -28,6 +28,8 @@ type handler struct {
 	role    *rbacv1.Role
 	token   string
 	ttl     time.Duration
+
+	duration *prometheus.HistogramVec
 }
 
 func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, factory informers.SharedInformerFactory, ls map[string]string, master *url.URL, prefix string, role *rbacv1.Role, token string, ttl time.Duration) http.Handler {
@@ -45,10 +47,15 @@ func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, fa
 		prefix:  prefix,
 		token:   token,
 		ttl:     ttl,
+
+		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "namespace_provisioner_action_duration_seconds",
+			Help: "Duration to run each action",
+		}, []string{"action"}),
 	}
 
 	if r != nil {
-		// register metrics
+		r.MustRegister(h.duration)
 	}
 
 	router := httprouter.New()
@@ -59,6 +66,11 @@ func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, fa
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func(start time.Time) {
+		h.duration.WithLabelValues("create").Observe(time.Since(start).Seconds())
+	}(start)
+
 	name := fmt.Sprintf("%s-%s", h.prefix, uuid.Must(uuid.NewUUID()).String())
 	ns := &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -74,6 +86,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func(start time.Time) {
+		h.duration.WithLabelValues("delete").Observe(time.Since(start).Seconds())
+	}(start)
+
 	name := httprouter.ParamsFromContext(r.Context()).ByName("name")
 	if name == "" {
 		http.Error(w, "a namespace name must be specified", http.StatusBadRequest)
