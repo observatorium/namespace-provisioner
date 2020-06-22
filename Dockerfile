@@ -1,5 +1,6 @@
 FROM alpine:3.12
 
-COPY ./namespace-provisioner /usr/bin/namespace-provisioner
+COPY ./namespace-provisioner /app/namespace-provisioner
+COPY ./role.yaml             /app/config/role.yaml
 
-ENTRYPOINT ["/usr/bin/namespace-provisioner"]
+ENTRYPOINT ["/app/namespace-provisioner"]
