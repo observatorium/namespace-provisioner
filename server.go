@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/google/uuid"
 	"github.com/julienschmidt/httprouter"
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,32 +40,32 @@ func withRequireToken(token string, next http.Handler) http.Handler {
 }
 
 type handler struct {
-	c       kubernetes.Interface
-	factory informers.SharedInformerFactory
-	labels  map[string]string
-	logger  log.Logger
-	master  *url.URL
-	prefix  string
-	role    *rbacv1.Role
-	ttl     time.Duration
+	c            kubernetes.Interface
+	factory      informers.SharedInformerFactory
+	labels       map[string]string
+	logger       log.Logger
+	apiServerURL *url.URL
+	prefix       string
+	role         *rbacv1.Role
+	ttl          time.Duration
 
 	duration *prometheus.HistogramVec
 }
 
-func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, factory informers.SharedInformerFactory, ls map[string]string, master *url.URL, prefix string, role *rbacv1.Role, token string, ttl time.Duration) http.Handler {
+func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, factory informers.SharedInformerFactory, ls map[string]string, apiServerURL *url.URL, prefix string, role *rbacv1.Role, token string, ttl time.Duration) http.Handler {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
 
 	h := &handler{
-		c:       c,
-		factory: factory,
-		labels:  ls,
-		logger:  l,
-		master:  master,
-		role:    role,
-		prefix:  prefix,
-		ttl:     ttl,
+		c:            c,
+		factory:      factory,
+		labels:       ls,
+		logger:       l,
+		apiServerURL: apiServerURL,
+		role:         role,
+		prefix:       prefix,
+		ttl:          ttl,
 
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "namespace_provisioner_action_duration_seconds",
@@ -105,6 +106,18 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Schedule asynchronous deletion of the namespace.
+	go func() {
+		<-time.After(h.ttl)
+		dpf := metav1.DeletePropagationForeground
+		if err := h.c.CoreV1().Namespaces().Delete(r.Context(), namespace, metav1.DeleteOptions{PropagationPolicy: &dpf}); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			level.Error(h.logger).Log("msg", "failed to clean up namespace", "err", err)
+		}
+	}()
+
 	sa := &v1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      np,
@@ -113,6 +126,23 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	sa, err := h.c.CoreV1().ServiceAccounts(namespace).Create(r.Context(), sa, metav1.CreateOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	se := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      np,
+			Namespace: namespace,
+			Labels:    h.labels,
+			Annotations: map[string]string{
+				v1.ServiceAccountNameKey: np,
+			},
+		},
+		Type: v1.SecretTypeServiceAccountToken,
+	}
+	se, err = h.c.CoreV1().Secrets(namespace).Create(r.Context(), se, metav1.CreateOptions{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,16 +188,11 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(sa.Secrets) == 0 {
-		msg := "no secret for service account"
-		h.logger.Log("msg", msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-
-	se, err := h.c.CoreV1().Secrets(namespace).Get(r.Context(), sa.Secrets[0].Name, metav1.GetOptions{})
+	se, err = h.c.CoreV1().Secrets(namespace).Get(r.Context(), np, metav1.GetOptions{})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		msg := "no secret for service account"
+		level.Error(h.logger).Log("msg", msg, "err", err)
+		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 
@@ -177,21 +202,18 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	config := api.NewConfig()
 	config.APIVersion = apiv1.SchemeGroupVersion.Version
 	config.Kind = "Config"
-
-	cluster := api.NewCluster()
-	cluster.Server = "https://56fa0b9d-1d55-4b2d-8d0b-3cb8e4350da9.api.k8s.fr-par.scw.cloud:6443" // TODO
-	cluster.CertificateAuthorityData = []byte(caCert)
-	config.Clusters[np] = cluster
-
-	user := api.NewAuthInfo()
-	user.Token = string(token)
-	config.AuthInfos[np] = user
-
-	context := api.NewContext()
-	context.AuthInfo = np
-	context.Cluster = np
-	context.Namespace = namespace
-	config.Contexts[np] = context
+	config.Clusters[np] = &api.Cluster{
+		Server:                   h.apiServerURL.String(),
+		CertificateAuthorityData: caCert,
+	}
+	config.AuthInfos[np] = &api.AuthInfo{
+		Token: string(token),
+	}
+	config.Contexts[np] = &api.Context{
+		AuthInfo:  np,
+		Cluster:   np,
+		Namespace: namespace,
+	}
 	config.CurrentContext = np
 
 	payload, err := clientcmd.Write(*config)
@@ -215,7 +237,7 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a namespace name must be specified", http.StatusBadRequest)
 		return
 	}
-	h.logger.Log("name", name)
+	level.Debug(h.logger).Log("name", name)
 
 	if _, err := h.factory.Core().V1().Namespaces().Lister().Get(name); err != nil {
 		if errors.IsNotFound(err) {
@@ -227,12 +249,12 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Log("msg", "deleting namespace", "namespace", name)
+	level.Info(h.logger).Log("msg", "deleting namespace", "namespace", name)
 
 	dpf := metav1.DeletePropagationForeground
 	if err := h.c.CoreV1().Namespaces().Delete(r.Context(), name, metav1.DeleteOptions{PropagationPolicy: &dpf}); err != nil {
 		if errors.IsNotFound(err) {
-			// If the namespace doesn't exit, then it was probably already deleted; respond OK.
+			// If the namespace doesn't exist, then it was probably already deleted; respond OK.
 			w.WriteHeader(http.StatusOK)
 			return
 		}

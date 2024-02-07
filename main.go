@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,7 +58,7 @@ func Main() error {
 	listen := flag.String("listen", ":8080", "The address at which to to serve the API.")
 	listenInternal := flag.String("listen-internal", ":9090", "The address at which to to serve the internal API.")
 	logLevel := flag.String("log-level", logLevelInfo, fmt.Sprintf("Log level to use. Possible values: %s", availableLogLevels))
-	master := flag.String("master", "", "The address of the Kubernetes API server (overrides any value in kubeconfig).")
+	apiServer := flag.String("server", "kubernetes", "The address of the Kubernetes API server to use in generated kubeconfigs.")
 	rolePath := flag.String("role", "", "The path to a file containing a Kubernetes RBAC role.")
 	prefix := flag.String("prefix", "np", "The prefix to use for Namespace names.")
 	selector := flag.String("selector", "controller.observatorium.io=namespace-selector", "The label selector to use to select resources.")
@@ -88,7 +87,7 @@ func Main() error {
 		return fmt.Errorf("log level %v unknown; possible values are: %s", *logLevel, availableLogLevels)
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags(*master, *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes config: %v", err)
 	}
@@ -100,7 +99,7 @@ func Main() error {
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 	)
 
-	rawRole, err := ioutil.ReadFile(*rolePath)
+	rawRole, err := os.ReadFile(*rolePath)
 	if err != nil {
 		return fmt.Errorf("failed to read Role %q: %w", *rolePath, err)
 	}
@@ -117,6 +116,16 @@ func Main() error {
 	factory := informers.NewSharedInformerFactoryWithOptions(c, 5*time.Minute, informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
 		opts.LabelSelector = *selector
 	}))
+	// Start the informer factory.
+	stop := make(chan struct{})
+	level.Info(l).Log("msg", "starting informers")
+	factory.Core().V1().Namespaces().Informer()
+	factory.Start(stop)
+	syncs := factory.WaitForCacheSync(stop)
+	if !syncs[reflect.TypeOf(&v1.Namespace{})] {
+		return errors.New("failed to sync informer caches")
+	}
+	level.Info(l).Log("msg", "successfully synced informer caches")
 
 	var g run.Group
 	{
@@ -135,15 +144,16 @@ func Main() error {
 	}
 
 	{
-		masterURL, err := url.Parse(*master)
+		apiServerURL, err := url.Parse(*apiServer)
 		if err != nil {
 			return err
 		}
-		h := newHander(l, r, c, factory, ls, masterURL, *prefix, role, *token, *ttl)
+		h := newHander(l, r, c, factory, ls, apiServerURL, *prefix, role, *token, *ttl)
 		s := http.Server{Addr: *listen, Handler: h}
 
 		// Start the API server.
 		g.Add(func() error {
+			level.Info(l).Log("msg", "starting the API server", "address", *listen)
 			return s.ListenAndServe()
 		}, func(error) {
 			s.Shutdown(context.Background())
@@ -159,7 +169,7 @@ func Main() error {
 			for {
 				select {
 				case <-term:
-					l.Log("msg", "caught interrupt; gracefully cleaning up; see you next time!")
+					level.Info(l).Log("msg", "caught interrupt; gracefully cleaning up; see you next time!")
 					return nil
 				case <-cancel:
 					return nil
@@ -171,17 +181,8 @@ func Main() error {
 	}
 
 	{
-		// Start the informer factory.
-		stop := make(chan struct{})
+		// Run the informer factory.
 		g.Add(func() error {
-			l.Log("msg", "starting informers")
-			factory.Core().V1().Namespaces().Informer()
-			factory.Start(stop)
-			syncs := factory.WaitForCacheSync(stop)
-			if !syncs[reflect.TypeOf(&v1.Namespace{})] {
-				return errors.New("failed to sync informer caches")
-			}
-			l.Log("msg", "successfully synced informer caches")
 			<-stop
 			return nil
 		}, func(error) {
