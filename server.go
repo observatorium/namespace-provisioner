@@ -16,6 +16,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -172,16 +173,31 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create Kubeconfig
-	se, err = h.c.CoreV1().Secrets(namespace).Get(r.Context(), np, metav1.GetOptions{})
-	if err != nil {
-		msg := "no secret for service account"
+	var caCert, token []byte
+	if err := wait.ExponentialBackoff(wait.Backoff{
+		Duration: time.Second,
+		Cap:      time.Minute,
+		Steps:    10,
+		Factor:   2,
+	}, func() (bool, error) {
+		se, err = h.c.CoreV1().Secrets(namespace).Get(r.Context(), np, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		var ok bool
+		if caCert, ok = se.Data["ca.crt"]; !ok {
+			return false, nil
+		}
+		if token, ok = se.Data["token"]; !ok {
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		msg := "failed to get secret for service account"
 		level.Error(h.logger).Log("msg", msg, "err", err)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
-
-	caCert := se.Data["ca.crt"]
-	token := se.Data["token"]
 
 	config := api.NewConfig()
 	config.APIVersion = apiv1.SchemeGroupVersion.Version
