@@ -46,13 +46,13 @@ type handler struct {
 	logger       log.Logger
 	apiServerURL *url.URL
 	prefix       string
-	role         *rbacv1.Role
+	clusterRole  string
 	ttl          time.Duration
 
 	duration *prometheus.HistogramVec
 }
 
-func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, factory informers.SharedInformerFactory, ls map[string]string, apiServerURL *url.URL, prefix string, role *rbacv1.Role, token string, ttl time.Duration) http.Handler {
+func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, factory informers.SharedInformerFactory, ls map[string]string, apiServerURL *url.URL, prefix string, clusterRole string, token string, ttl time.Duration) http.Handler {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
@@ -63,7 +63,7 @@ func newHander(l log.Logger, r prometheus.Registerer, c kubernetes.Interface, fa
 		labels:       ls,
 		logger:       l,
 		apiServerURL: apiServerURL,
-		role:         role,
+		clusterRole:  clusterRole,
 		prefix:       prefix,
 		ttl:          ttl,
 
@@ -148,14 +148,6 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := h.role.DeepCopy()
-	role.Namespace = namespace
-	role.ObjectMeta.Labels = h.labels
-	if _, err := h.c.RbacV1().Roles(namespace).Create(r.Context(), role, metav1.CreateOptions{}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	rb := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      np,
@@ -164,8 +156,8 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
-			Kind:     role.Kind,
-			Name:     role.GetName(),
+			Kind:     "ClusterRole",
+			Name:     h.clusterRole,
 		},
 		Subjects: []rbacv1.Subject{{
 			Kind:      "ServiceAccount",
@@ -180,14 +172,6 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create Kubeconfig
-
-	// TODO: Use an informer or something proper as this might race - famous last words
-	sa, err = h.c.CoreV1().ServiceAccounts(namespace).Get(r.Context(), sa.Name, metav1.GetOptions{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	se, err = h.c.CoreV1().Secrets(namespace).Get(r.Context(), np, metav1.GetOptions{})
 	if err != nil {
 		msg := "no secret for service account"
