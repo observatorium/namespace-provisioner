@@ -20,11 +20,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	flag "github.com/spf13/pflag"
 	v1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/deprecated/scheme"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -59,7 +56,7 @@ func Main() error {
 	listenInternal := flag.String("listen-internal", ":9090", "The address at which to to serve the internal API.")
 	logLevel := flag.String("log-level", logLevelInfo, fmt.Sprintf("Log level to use. Possible values: %s", availableLogLevels))
 	apiServer := flag.String("server", "kubernetes", "The address of the Kubernetes API server to use in generated kubeconfigs.")
-	rolePath := flag.String("role", "", "The path to a file containing a Kubernetes RBAC role.")
+	clusterRole := flag.String("cluster-role", "", "The of a Kubernetes ClusterRole to bind to ServiceAccounts in created Namespaces.")
 	prefix := flag.String("prefix", "np", "The prefix to use for Namespace names.")
 	selector := flag.String("selector", "controller.observatorium.io=namespace-selector", "The label selector to use to select resources.")
 	token := flag.String("token", "", "The token to require for authentication with the API.")
@@ -98,16 +95,6 @@ func Main() error {
 		prometheus.NewGoCollector(),
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 	)
-
-	rawRole, err := os.ReadFile(*rolePath)
-	if err != nil {
-		return fmt.Errorf("failed to read Role %q: %w", *rolePath, err)
-	}
-	role := &rbacv1.Role{}
-	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), rawRole, role); err != nil {
-		return fmt.Errorf("failed to decode Role: %w", err)
-	}
-	role.Name = np
 
 	ls, err := labels.ConvertSelectorToLabelsMap(*selector)
 	if err != nil {
@@ -148,7 +135,7 @@ func Main() error {
 		if err != nil {
 			return err
 		}
-		h := newHander(l, r, c, factory, ls, apiServerURL, *prefix, role, *token, *ttl)
+		h := newHander(l, r, c, factory, ls, apiServerURL, *prefix, *clusterRole, *token, *ttl)
 		s := http.Server{Addr: *listen, Handler: h}
 
 		// Start the API server.
