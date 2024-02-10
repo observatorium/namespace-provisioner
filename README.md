@@ -15,9 +15,10 @@ Currently, the API only allows clients to authenticate via a bearer token, which
 
 ### Privileges
 
-The Namespace Provisioner provides the client with a Kubeconfig to operate the Namespaces it creates.
-The privileges given to this Kubeconfig can be controlled by providing the Namespace Provisioner a file containing a Kubernete RBAC Role at run-time with the `--role=<path-to-role>` flag.
-The Role contained in the file will be created in every provisioned Namespace and bound to the returned Kubeconfig. 
+The Namespace Provisioner provides the client with a Kubeconfig to operate the Namespaces it creates and binds a ClusterRole it to give it privileges.
+The ClusterRole is bound to the Kubeconfig using a RoleBinding, scoping the permissions down to only the newly created Namespace.
+By default, the Namespace Provisioner uses a ClusterRole named `namespace-provisioner-grant`, which grants no permissions to the subject.
+To control the permissions granted to the returned Kubeconfig, administrators can edit the `namespace-provisioner-grant` ClusterRole or change the target ClusterRole by specifying a different `--cluster-role=<name>` flag passed to the Namespace Provisioner.
 
 ### API Server
 

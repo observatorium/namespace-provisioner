@@ -55,19 +55,7 @@ jobs:
         data:
           server: "$SERVER"
         EOF
-        cat <<EOF | kubectl apply -f -
-        apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRole
-        metadata:
-          name: namespace-provisioner-grant
-        rules:
-        - apiGroups:
-          - ""
-          resources:
-          - pods
-          verbs:
-          - list
-        EOF
+        kubectl apply -f manifests/example-grants/pods.yaml
         kubectl -n namespace-provisioner set image deployment namespace-provisioner namespace-provisioner=quay.io/observatorium/namespace-provisioner:test
         kubectl -n namespace-provisioner rollout status deployment namespace-provisioner --timeout 1m
     - name: Test namespace-provisioner
