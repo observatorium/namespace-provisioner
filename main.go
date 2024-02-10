@@ -55,7 +55,7 @@ func Main() error {
 	listen := flag.String("listen", ":8080", "The address at which to to serve the API.")
 	listenInternal := flag.String("listen-internal", ":9090", "The address at which to to serve the internal API.")
 	logLevel := flag.String("log-level", logLevelInfo, fmt.Sprintf("Log level to use. Possible values: %s", availableLogLevels))
-	apiServer := flag.String("server", "kubernetes", "The address of the Kubernetes API server to use in generated kubeconfigs.")
+	apiServer := flag.String("server", "https://kubernetes", "The address of the Kubernetes API server to use in generated kubeconfigs.")
 	clusterRole := flag.String("cluster-role", "", "The of a Kubernetes ClusterRole to bind to ServiceAccounts in created Namespaces.")
 	prefix := flag.String("prefix", "np", "The prefix to use for Namespace names.")
 	selector := flag.String("selector", "controller.observatorium.io=namespace-selector", "The label selector to use to select resources.")

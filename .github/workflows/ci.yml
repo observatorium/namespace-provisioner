@@ -16,7 +16,17 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Build container
+      uses: docker/build-push-action@v5
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
     - name: Set up Docker Buildx
@@ -25,14 +35,60 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
+        load: true
+        tags: quay.io/observatorium/namespace-provisioner:test
+    - name: Setup Kubernetes
+      uses: helm/kind-action@v1.8.0
+      with:
+        cluster_name: e2e
+    - name: Install namespace-provisioner
+      run: |
+        SERVER="$(kubectl config view -o jsonpath='{.clusters[?(@.name == "kind-e2e")].cluster.server}')"
+        kind load docker-image --name e2e quay.io/observatorium/namespace-provisioner:test
+        kubectl apply -f manifests/namespace-provisioner.yaml
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: namespace-provisioner
+          namespace: namespace-provisioner
+        data:
+          server: "$SERVER"
+        EOF
+        cat <<EOF | kubectl apply -f -
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: namespace-provisioner-grant
+        rules:
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - list
+        EOF
+        kubectl -n namespace-provisioner set image deployment namespace-provisioner namespace-provisioner=quay.io/observatorium/namespace-provisioner:test
+        kubectl -n namespace-provisioner rollout status deployment namespace-provisioner --timeout 1m
+    - name: Test namespace-provisioner
+      run: |
+        kubectl -n namespace-provisioner port-forward service/namespace-provisioner 8080 &
+        until lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null; do sleep 1; done
+        curl localhost:8080/api/v1/namespace -X POST -H "Authorization: bearer PASSWORD" > kubeconfig
+        kubectl --kubeconfig kubeconfig get pods
+    - name: Debug failure
+      if: failure()
+      run: |
+        kubectl get -A all
+        kubectl -n namespace-provisioner logs deploy/namespace-provisioner
 
   push:
     if: github.event_name != 'pull_request'
     needs:
     - container
+    - e2e
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
     - name: Set up Docker Buildx
@@ -50,7 +106,6 @@ jobs:
       id: push
       uses: docker/build-push-action@v5
       with:
-        context: .
         push: true
         platforms: linux/arm64, linux/amd64
         tags: quay.io/observatorium/namespace-provisioner:latest, quay.io/observatorium/namespace-provisioner:${{ steps.sha.outputs.sha }}
