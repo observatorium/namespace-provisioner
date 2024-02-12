@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/name: namespace-provisioner
+    app.kubernetes.io/part-of: namespace-provisioner
+  name: namespace-provisioner
+  namespace: namespace-provisioner
+spec:
+  endpoints:
+  - port: http
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: namespace-provisioner
+      app.kubernetes.io/part-of: namespace-provisioner
