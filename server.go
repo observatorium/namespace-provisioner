@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +97,19 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		h.duration.WithLabelValues("create").Observe(time.Since(start).Seconds())
 	}(start)
 
+	ttl := h.ttl
+	if r.URL.Query().Has("ttl") {
+		s, err := strconv.Atoi(r.URL.Query().Get("ttl"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ttl = time.Duration(s) * time.Second
+		if ttl == 0 || (h.ttl > 0 && ttl > h.ttl) {
+			ttl = h.ttl
+		}
+	}
+
 	namespace := fmt.Sprintf("%s-%s", h.prefix, uuid.Must(uuid.NewUUID()).String())
 	ns := &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -107,17 +122,19 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Schedule asynchronous deletion of the namespace.
-	go func() {
-		<-time.After(h.ttl)
-		dpf := metav1.DeletePropagationForeground
-		if err := h.c.CoreV1().Namespaces().Delete(r.Context(), namespace, metav1.DeleteOptions{PropagationPolicy: &dpf}); err != nil {
-			if errors.IsNotFound(err) {
-				return
+	if ttl != 0 {
+		// Schedule asynchronous deletion of the namespace.
+		go func() {
+			<-time.After(ttl)
+			dpf := metav1.DeletePropagationForeground
+			if err := h.c.CoreV1().Namespaces().Delete(context.Background(), namespace, metav1.DeleteOptions{PropagationPolicy: &dpf}); err != nil {
+				if errors.IsNotFound(err) {
+					return
+				}
+				level.Error(h.logger).Log("msg", "failed to clean up namespace", "err", err)
 			}
-			level.Error(h.logger).Log("msg", "failed to clean up namespace", "err", err)
-		}
-	}()
+		}()
+	}
 
 	sa := &v1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
