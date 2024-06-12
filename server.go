@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -98,13 +97,12 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}(start)
 
 	ttl := h.ttl
+	var err error
 	if r.URL.Query().Has("ttl") {
-		s, err := strconv.Atoi(r.URL.Query().Get("ttl"))
-		if err != nil {
+		if ttl, err = time.ParseDuration(r.URL.Query().Get("ttl")); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ttl = time.Duration(s) * time.Second
 		if ttl == 0 || (h.ttl > 0 && ttl > h.ttl) {
 			ttl = h.ttl
 		}
@@ -143,8 +141,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			Labels:    h.labels,
 		},
 	}
-	sa, err := h.c.CoreV1().ServiceAccounts(namespace).Create(r.Context(), sa, metav1.CreateOptions{})
-	if err != nil {
+	if sa, err = h.c.CoreV1().ServiceAccounts(namespace).Create(r.Context(), sa, metav1.CreateOptions{}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
