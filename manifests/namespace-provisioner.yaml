@@ -36,6 +36,7 @@ metadata:
     app.kubernetes.io/part-of: namespace-provisioner
 data:
   server: https://kubernetes
+  ttl: 1h
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -163,6 +164,7 @@ spec:
         - --listen-internal=:9090
         - --cluster-role=namespace-provisioner-grant
         - --server=$(SERVER)
+        - --ttl=$(TTL)
         - --token=$(TOKEN)
         env:
         - name: TOKEN
@@ -175,6 +177,11 @@ spec:
             configMapKeyRef:
               name: namespace-provisioner
               key: server
+        - name: TTL
+          valueFrom:
+            configMapKeyRef:
+              name: namespace-provisioner
+              key: ttl
         ports:
         - containerPort: 8080
           name: http

@@ -54,6 +54,7 @@ jobs:
           namespace: namespace-provisioner
         data:
           server: "$SERVER"
+          ttl: 1h
         EOF
         kubectl apply -f manifests/example-grants/pods.yaml
         kubectl -n namespace-provisioner set image deployment namespace-provisioner namespace-provisioner=quay.io/observatorium/namespace-provisioner:test
@@ -62,7 +63,7 @@ jobs:
       run: |
         kubectl -n namespace-provisioner port-forward service/namespace-provisioner 8080 &
         until lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null; do sleep 1; done
-        curl localhost:8080/api/v1/namespace?ttl=1 -X POST -H "Authorization: bearer PASSWORD" > kubeconfig
+        curl localhost:8080/api/v1/namespace?ttl=1s -X POST -H "Authorization: bearer PASSWORD" > kubeconfig
         kubectl --kubeconfig kubeconfig get pods
         sleep 5
         [ $(kubectl get ns | grep np- | wc -l) -eq 0 ]
