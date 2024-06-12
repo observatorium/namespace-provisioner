@@ -54,6 +54,7 @@ jobs:
           namespace: namespace-provisioner
         data:
           server: "$SERVER"
+          ttl: 1h
         EOF
         kubectl apply -f manifests/example-grants/pods.yaml
         kubectl -n namespace-provisioner set image deployment namespace-provisioner namespace-provisioner=quay.io/observatorium/namespace-provisioner:test
