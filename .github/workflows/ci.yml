@@ -67,6 +67,8 @@ jobs:
         kubectl --kubeconfig kubeconfig get pods
         sleep 5
         [ $(kubectl get ns | grep np- | wc -l) -eq 0 ]
+        ! curl localhost:8080/api/v1/namespace?server=foo -X POST -H "Authorization: bearer PASSWORD" --fail
+        curl localhost:8080/api/v1/namespace?server=https://example.com -X POST -H "Authorization: bearer PASSWORD" | grep --quiet --fixed-strings "server: https://example.com"
     - name: Debug failure
       if: failure()
       run: |
