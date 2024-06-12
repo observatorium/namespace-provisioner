@@ -28,10 +28,10 @@ The Namespace Provisioner runs an API server over HTTP that exposes two API endp
 
 #### Namespace Creation - POST /api/v1/namespace
 
-The Namespace creation endpoint accepts the following parameters:
-1. ttl: the time in seconds that the Namespace should exist in the Kubernetes cluster; if 0 is given, then the Namespace Provisioner’s default lifetime is applied.
+The Namespace creation endpoint accepts the following optional query parameters:
+1. `ttl`: the time in seconds that the Namespace should exist in the Kubernetes cluster; if 0 is given, then the Namespace Provisioner’s default lifetime is applied.
 All provisioned Namespaces will be labeled with a Unix timestamp equal to the current time plus this duration; and
-1. Optional: Kubernetes API URL; the endpoint of the Kubernetes API that the generated Kubeconfig should use.
+1. `url`; the URL of the Kubernetes API that the generated Kubeconfig should use.
 
 The Namespace creation endpoint responds with the following data:
 1. A Kubeconfig with scoped privileges for the provisioned Namespace using the provided RBAC Role and the Kubernetes API URL provided in the creation request.
