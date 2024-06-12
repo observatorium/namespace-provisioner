@@ -108,6 +108,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	server := h.apiServerURL
+	if r.URL.Query().Has("server") {
+		if server, err = url.Parse(r.URL.Query().Get("server")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	namespace := fmt.Sprintf("%s-%s", h.prefix, uuid.Must(uuid.NewUUID()).String())
 	ns := &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -217,7 +225,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	config.APIVersion = apiv1.SchemeGroupVersion.Version
 	config.Kind = "Config"
 	config.Clusters[np] = &api.Cluster{
-		Server:                   h.apiServerURL.String(),
+		Server:                   server.String(),
 		CertificateAuthorityData: caCert,
 	}
 	config.AuthInfos[np] = &api.AuthInfo{
